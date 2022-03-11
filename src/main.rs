@@ -11,16 +11,17 @@ use std::sync;
 fn main() {
     let (mut exponent, mut signal_length, mut update_frequency) = (0, 0, 0);
     let mut args_list = std::env::args();
+    args_list.next();
     while let Some(argument) = args_list.next() {
         match argument.as_str() {
-            "-e" | "-exp" | "--exponent" => {
+            "-e" | "-E" | "-exp" | "--exponent" => {
                 if let Some(next_arg) = args_list.next() {
                     exponent = parsenum(next_arg);
                 } else {
                     usage();
                 }
             }
-            "-s" | "-sig" | "--siglen" => {
+            "-s" | "-S" | "-sig" | "--siglen" => {
                 if let Some(next_arg) = args_list.next() {
                     signal_length = parsenum(next_arg);
                 } else {
@@ -61,19 +62,21 @@ fn prptest(exponent: usize, signal_length: usize, update_frequency: usize) -> bo
     let (_bit_array, two_to_the_bit_array, weight_array, fft, ifft) =
         initialize_constants(exponent, signal_length);
 
-    let mut residue = vec![0.0; signal_length];
+    let mut residue = signalize(3, &two_to_the_bit_array);
 
     for i in 0..exponent {
         if i % update_frequency == 0 {
             println!("Iteration: {:?}", i);
-            println!("Percent Done: {:.2}%", (i as f64 / exponent as f64) * 100.0);
+            println!("{:.2}% Finished", (i as f64 / exponent as f64) * 100.0);
             // println!("Current Roundoff Error: {:.4}", roundoff);
-            println!("Residue: {:?}", &residue);
+            println!("Residue: {:?}\n", &residue);
         }
         residue = squaremod_with_ibdwt(residue, &two_to_the_bit_array, &weight_array, &fft, &ifft);
     }
 
-    todo!()
+    println!("Final Residue: {:?}", residue);
+
+    designalize(residue, &two_to_the_bit_array) == 9
 }
 
 fn squaremod_with_ibdwt(
@@ -214,6 +217,29 @@ fn initialize_constants(
     let ifft = planner.plan_fft_inverse(signal_length);
 
     (bit_array, two_to_the_bit_array, weight_array, fft, ifft)
+}
+
+fn signalize(mut num_to_signalize: usize, two_to_the_bit_array: &[f64]) -> Vec<f64> {
+    let mut signal = vec![0.0_f64; two_to_the_bit_array.len()];
+    let mut i = 0;
+    while num_to_signalize > 0 {
+        signal[i] = num_to_signalize as f64 % two_to_the_bit_array[i];
+        num_to_signalize /= two_to_the_bit_array[i] as usize;
+        i += 1;
+    }
+    signal
+}
+
+fn designalize(signal: Vec<f64>, two_to_the_bit_array: &[f64]) -> i64 {
+    let mut base = 1;
+    let mut resultant_num = 0;
+    let mut i = 0;
+    while i < signal.len() {
+        resultant_num += signal[i] as i64 * base;
+        base *= two_to_the_bit_array[i] as i64;
+        i += 1;
+    }
+    resultant_num
 }
 
 /// Parse the given string as a `u128`.
