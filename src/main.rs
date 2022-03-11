@@ -3,13 +3,13 @@
 //!
 //! Josh McFerran, Winter 2022, Programming in Rust
 
-use std::env;
+use rustfft::{num_complex::Complex, FftPlanner};
 
 /// Retreives the command line args and checks them for validity before passing the bulk
 /// of the work to prptest
 fn main() {
     let (mut exponent, mut signal_length, mut update_frequency) = (0, 0, 0);
-    let mut args_list = env::args();
+    let mut args_list = std::env::args();
     while let Some(argument) = args_list.next() {
         match argument.as_str() {
             "-e" | "-exp" | "--exponent" => {
@@ -57,7 +57,7 @@ fn main() {
 /// This runs the actual loop and is the bulk of the program. Returns true if 2 ^ exponent -1
 /// is probably prime, false otherwise.
 fn prptest(exponent: usize, signal_length: usize, update_frequency: usize) -> bool {
-    let (bit_array, two_to_the_bit_array, weight_array) =
+    let (_bit_array, two_to_the_bit_array, weight_array, fft, ifft) =
         initialize_constants(exponent, signal_length);
 
     let mut residue = vec![0.0; signal_length];
@@ -69,7 +69,7 @@ fn prptest(exponent: usize, signal_length: usize, update_frequency: usize) -> bo
             // println!("Current Roundoff Error: {:.4}", roundoff);
             println!("Residue: {:?}", &residue);
         }
-        residue = squaremod_with_ibdwt(residue, &two_to_the_bit_array, &weight_array);
+        residue = squaremod_with_ibdwt(residue, &two_to_the_bit_array, &weight_array, &fft, &ifft);
     }
 
     todo!()
@@ -79,36 +79,88 @@ fn squaremod_with_ibdwt(
     signal: Vec<f64>,
     two_to_the_bit_array: &Vec<f64>,
     weight_array: &Vec<f64>,
+    fft: &std::sync::Arc<dyn rustfft::Fft<f64>>,
+    ifft: &std::sync::Arc<dyn rustfft::Fft<f64>>,
 ) -> Vec<f64> {
     let balanced_signal = balance(signal, two_to_the_bit_array);
-    let transformed_signal = weighted_transform(balanced_signal, weight_array);
+    let transformed_signal = weighted_transform(balanced_signal, weight_array, fft);
 
     let squared_transformed_signal = transformed_signal.into_iter().map(|x| x * x).collect();
 
-    let squared_signal = inverse_weighted_transform(squared_transformed_signal, weight_array);
+    let squared_signal = inverse_weighted_transform(squared_transformed_signal, weight_array, ifft);
     let rounded_signal = squared_signal.into_iter().map(|x| x.round()).collect();
-    let carried_signal = partial_carry(rounded_signal, two_to_the_bit_array);
 
-    carried_signal
+    complete_carry(rounded_signal, two_to_the_bit_array)
 }
 
-fn balance(signal: Vec<f64>, two_to_the_bit_array: &Vec<f64>) -> Vec<f64> {
+fn balance(mut signal: Vec<f64>, two_to_the_bit_array: &Vec<f64>) -> Vec<f64> {
+    let mut carry_val = 0.0;
+    let mut i = 0;
+    while i < signal.len() {
+        signal[i] += carry_val;
+        if signal[i] > two_to_the_bit_array[i] / 2.0 {
+            signal[i] -= two_to_the_bit_array[i];
+            carry_val = 1.0;
+        } else {
+            carry_val = 0.0;
+        }
+    }
+    signal
+}
+
+fn weighted_transform(
+    mut signal: Vec<f64>,
+    weight_array: &[f64],
+    fft: &std::sync::Arc<dyn rustfft::Fft<f64>>,
+) -> Vec<Complex<f64>> {
+    let mut complex_signal = Vec::new();
+
+    let mut i = 0;
+    while i < signal.len() {
+        signal[i] *= weight_array[i];
+        complex_signal.push(Complex {
+            re: signal[i],
+            im: 0.0,
+        });
+    }
+
+    fft.process(&mut complex_signal);
+    complex_signal
+}
+
+fn inverse_weighted_transform(
+    mut complex_signal: Vec<Complex<f64>>,
+    weight_array: &Vec<f64>,
+    ifft: &std::sync::Arc<dyn rustfft::Fft<f64>>,
+) -> Vec<f64> {
+    let mut real_signal = Vec::new();
+
+    ifft.process(&mut complex_signal);
+
+    let mut i = 0;
+    while i < complex_signal.len() {
+        real_signal.push(complex_signal[i].re);
+        real_signal[i] /= weight_array[i];
+        i += 1;
+    }
+
+    real_signal
+}
+
+fn complete_carry(signal: Vec<f64>, two_to_the_bit_array: &Vec<f64>) -> Vec<f64> {
     todo!()
 }
 
-fn weighted_transform(signal: Vec<f64>, weight_array: &Vec<f64>) -> Vec<f64> {
-    todo!()
-}
-
-fn inverse_weighted_transform(signal: Vec<f64>, weight_array: &Vec<f64>) -> Vec<f64> {
-    todo!()
-}
-
-fn partial_carry(signal: Vec<f64>, two_to_the_bit_array: &Vec<f64>) -> Vec<f64> {
-    todo!()
-}
-
-fn initialize_constants(exponent: usize, signal_length: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+fn initialize_constants(
+    exponent: usize,
+    signal_length: usize,
+) -> (
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f64>,
+    std::sync::Arc<dyn rustfft::Fft<f64>>,
+    std::sync::Arc<dyn rustfft::Fft<f64>>,
+) {
     let fexponent: f64 = exponent as f64;
     let fsignal_length: f64 = signal_length as f64;
     let mut fi: f64;
@@ -138,7 +190,11 @@ fn initialize_constants(exponent: usize, signal_length: usize) -> (Vec<f64>, Vec
         fi += 1.0;
     }
 
-    (bit_array, two_to_the_bit_array, weight_array)
+    let mut planner = FftPlanner::<f64>::new();
+    let fft = planner.plan_fft_forward(signal_length);
+    let ifft = planner.plan_fft_inverse(signal_length);
+
+    (bit_array, two_to_the_bit_array, weight_array, fft, ifft)
 }
 
 /// Parse the given string as a `u128`.
