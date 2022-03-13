@@ -3,8 +3,9 @@
 //!
 //! Josh McFerran, Winter 2022, Programming in Rust
 
-use rustfft::{num_complex::Complex, Fft, FftPlanner};
-use std::sync;
+use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
+use rustfft::num_complex::Complex;
+use std::sync::Arc;
 
 /// Retreives the command line args and checks them for validity before passing the bulk
 /// of the work to prptest
@@ -43,6 +44,10 @@ fn main() {
 
     assert!(exponent > 3, "Invalid exponent; must be greater than 3");
     assert!(
+        signal_length > 3,
+        "Invalid signal length; must be greater than 3"
+    );
+    assert!(
         signal_length < exponent,
         "Invalid signal length; must be less than the exponent"
     );
@@ -74,8 +79,8 @@ fn prptest(
 
     if run_verbose {
         println!(
-            "Bit Array: {:?}\ntwo_to_the_bit_array: {:?}\n",
-            bit_array, two_to_the_bit_array
+            "Bit Array: {:?}\ntwo_to_the_bit_array: {:?}\nWeight Array:{:?}\n",
+            bit_array, two_to_the_bit_array, weight_array
         );
     }
 
@@ -84,10 +89,7 @@ fn prptest(
             println!("Iteration: {:?}", i);
             println!("{:.2}% Finished", (i as f64 / exponent as f64) * 100.0);
             // println!("Current Roundoff Error: {:.4}", roundoff);
-            println!("Residue: {:?}\n", &residue);
-        }
-        if run_verbose {
-            println!("Designalized: {:?}", designalize(&residue, &two_to_the_bit_array));
+            println!("Residue: {:?}", &residue);
         }
         residue = squaremod_with_ibdwt(
             residue,
@@ -97,19 +99,25 @@ fn prptest(
             &ifft,
             run_verbose,
         );
+        // if roundoff > 0.4375:
+        // raise Exception(f"Roundoff error exceeded threshold (iteration {i}): {roundoff} vs 0.4375")
+  
     }
 
     println!("Final Residue: {:?}", residue);
 
-    designalize(&residue, &two_to_the_bit_array) == 9
+    let first_is_nine = residue[0] == 9.0;
+    let rest_are_zero = residue[1..signal_length].iter().all(|&x| x == 0.0);
+
+    first_is_nine && rest_are_zero
 }
 
 fn squaremod_with_ibdwt(
     signal: Vec<f64>,
     two_to_the_bit_array: &[f64],
     weight_array: &[f64],
-    fft: &std::sync::Arc<dyn Fft<f64>>,
-    ifft: &std::sync::Arc<dyn Fft<f64>>,
+    fft: &Arc<dyn RealToComplex<f64>>,
+    ifft: &Arc<dyn ComplexToReal<f64>>,
     run_verbose: bool,
 ) -> Vec<f64> {
     let balanced_signal = balance(signal, two_to_the_bit_array);
@@ -121,23 +129,29 @@ fn squaremod_with_ibdwt(
     if run_verbose {
         println!("fft: {:?}", transformed_signal);
     }
-    
+
     let squared_transformed_signal = transformed_signal.into_iter().map(|x| x * x).collect();
     if run_verbose {
         println!("Squared fft: {:?}", squared_transformed_signal);
     }
-    
+
     let squared_signal = inverse_weighted_transform(squared_transformed_signal, weight_array, ifft);
     if run_verbose {
-        println!("ifft:  {:?}", squared_signal);
+        println!("ifft: {:?}", squared_signal);
     }
 
-    let rounded_signal = squared_signal.into_iter().map(|x| x.round()).collect();
+    let rounded_signal = squared_signal.iter().map(|&x| x.round()).collect();
     if run_verbose {
-        println!("Rounded:  {:?}\n\n", rounded_signal);
+        println!("Rounded: {:?}", rounded_signal);
+    }
+    // roundoff = jnp.max(jnp.abs(jnp.subtract(squared_signal, rounded_signal)))
+
+    let carried_signal = complete_carry(rounded_signal, two_to_the_bit_array);
+    if run_verbose {
+        println!("Carried: {:?}\n\n", carried_signal);
     }
 
-    complete_carry(rounded_signal, two_to_the_bit_array)
+    carried_signal
 }
 
 fn balance(mut signal: Vec<f64>, two_to_the_bit_array: &[f64]) -> Vec<f64> {
@@ -151,43 +165,38 @@ fn balance(mut signal: Vec<f64>, two_to_the_bit_array: &[f64]) -> Vec<f64> {
             carry_val = 0.0;
         }
     }
+    signal[0] += carry_val;
     signal
 }
 
 fn weighted_transform(
-    mut signal: Vec<f64>,
+    signal: Vec<f64>,
     weight_array: &[f64],
-    fft: &std::sync::Arc<dyn Fft<f64>>,
+    fft: &Arc<dyn RealToComplex<f64>>,
 ) -> Vec<Complex<f64>> {
-    let mut complex_signal = Vec::new();
+    let mut complex_signal = fft.make_output_vec();
+    let mut weighted_signal = Vec::new();
 
     for i in 0..signal.len() {
-        signal[i] *= weight_array[i];
-        complex_signal.push(Complex {
-            re: signal[i],
-            im: 0.0,
-        });
+        weighted_signal.push(signal[i] * weight_array[i]);
     }
+    fft.process(&mut weighted_signal, &mut complex_signal)
+        .unwrap();
 
-    fft.process(&mut complex_signal);
     complex_signal
 }
 
 fn inverse_weighted_transform(
     mut complex_signal: Vec<Complex<f64>>,
     weight_array: &[f64],
-    ifft: &std::sync::Arc<dyn Fft<f64>>,
+    ifft: &Arc<dyn ComplexToReal<f64>>,
 ) -> Vec<f64> {
-    let mut real_signal = Vec::new();
-
-    ifft.process(&mut complex_signal);
-    println!("Unweighted ifft: {:?}", complex_signal);
-
-    for i in 0..complex_signal.len() {
-        real_signal.push(complex_signal[i].re);
-        real_signal[i] /= weight_array[i];
+    let mut real_signal = ifft.make_output_vec();
+    let signal_length = real_signal.len() as f64;
+    ifft.process(&mut complex_signal, &mut real_signal).unwrap();
+    for i in 0..real_signal.len() {
+        real_signal[i] /= weight_array[i] * signal_length;
     }
-
     real_signal
 }
 
@@ -197,13 +206,15 @@ fn complete_carry(mut signal: Vec<f64>, two_to_the_bit_array: &[f64]) -> Vec<f64
     for i in 0..signal_length {
         signal[i] += carry_val;
         carry_val = (signal[i] / two_to_the_bit_array[i]).floor();
-        signal[i] %= two_to_the_bit_array[i];
+        signal[i] = ((signal[i] % two_to_the_bit_array[i]) + two_to_the_bit_array[i]) % two_to_the_bit_array[i];
     }
     let mut i = 0;
+    let mut index;
     while carry_val != 0.0 {
-        signal[i % signal_length] += carry_val;
-        carry_val = (signal[i % signal_length] / two_to_the_bit_array[i % signal_length]).floor();
-        signal[i % signal_length] %= two_to_the_bit_array[i % signal_length];
+        index = i % signal_length;
+        signal[index] += carry_val;
+        carry_val = (signal[index] / two_to_the_bit_array[index]).floor();
+        signal[index] = ((signal[index] % two_to_the_bit_array[index]) + two_to_the_bit_array[index]) % two_to_the_bit_array[index];
         i += 1;
     }
 
@@ -224,9 +235,10 @@ fn init_bit_array(exponent: usize, signal_length: usize) -> (Vec<f64>, Vec<f64>)
         fi += 1.0;
     }
 
+    assert!(bit_array[0] > 4.0, "Signal length too large for this exponent.");
     let mut two_to_the_bit_array = Vec::new();
-    for i in bit_array.iter() {
-        two_to_the_bit_array.push(2_f64.powf(*i));
+    for &i in bit_array.iter() {
+        two_to_the_bit_array.push(2_f64.powf(i));
     }
     (bit_array, two_to_the_bit_array)
 }
@@ -239,19 +251,18 @@ fn init_weight_array(exponent: usize, signal_length: usize) -> Vec<f64> {
     let mut fi = 0.0;
     while fi < fsignal_length {
         weight_array.push(
-            2_f64.powf((fexponent * fi) / fsignal_length).ceil()
-                - ((fexponent * fi) / fsignal_length),
+            2_f64.powf(((fexponent * fi) / fsignal_length).ceil()
+                - ((fexponent * fi) / fsignal_length))
         );
         fi += 1.0;
     }
     weight_array
 }
 
-fn init_fft(signal_length: usize) -> (sync::Arc<dyn Fft<f64>>, sync::Arc<dyn Fft<f64>>) {
-    let mut planner = FftPlanner::<f64>::new();
+fn init_fft(signal_length: usize) -> (Arc<dyn RealToComplex<f64>>, Arc<dyn ComplexToReal<f64>>) {
+    let mut planner = RealFftPlanner::<f64>::new();
     let fft = planner.plan_fft_forward(signal_length);
     let ifft = planner.plan_fft_inverse(signal_length);
-
     (fft, ifft)
 }
 
@@ -266,15 +277,15 @@ fn signalize(mut num_to_signalize: usize, two_to_the_bit_array: &[f64]) -> Vec<f
     signal
 }
 
-fn designalize(signal: &[f64], two_to_the_bit_array: &[f64]) -> i64 {
-    let mut base = 1;
-    let mut resultant_num = 0;
-    for i in 0..signal.len() {
-        resultant_num += signal[i] as i64 * base;
-        base *= two_to_the_bit_array[i] as i64;
-    }
-    resultant_num
-}
+// fn designalize(signal: &[f64], two_to_the_bit_array: &[f64]) -> i64 {
+//     let mut base = 1;
+//     let mut resultant_num = 0;
+//     for i in 0..signal.len() {
+//         resultant_num += signal[i] as i64 * base;
+//         base *= two_to_the_bit_array[i] as i64;
+//     }
+//     resultant_num
+// }
 
 /// Parse the given string as a `u128`.
 fn parsenum(s: String) -> usize {

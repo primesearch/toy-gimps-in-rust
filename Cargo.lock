@@ -46,6 +46,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "realfft"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a83b876fe55da7e1bf5deeacb93d6411edf81eba0e1a497e79c067734729053a"
+dependencies = [
+ "rustfft",
+]
+
+[[package]]
 name = "rustfft"
 version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -69,6 +78,7 @@ checksum = "a3ff2f71c82567c565ba4b3009a9350a96a7269eaa4001ebedae926230bc2254"
 name = "toy-gimps-in-rust"
 version = "0.1.0"
 dependencies = [
+ "realfft",
  "rustfft",
 ]
 
