@@ -74,13 +74,31 @@ fn prptest(
     let (bit_array, two_to_the_bit_array) = init_bit_array(exponent, signal_length);
     let weight_array = init_weight_array(exponent, signal_length);
     let (fft, ifft) = init_fft(signal_length);
+    let mut roundoff = 0.0;
 
     let mut residue = signalize(3, &two_to_the_bit_array);
 
-    if run_verbose {
+    if signal_length <= 5 {
         println!(
             "Bit Array: {:?}\ntwo_to_the_bit_array: {:?}\nWeight Array:{:?}\n",
             bit_array, two_to_the_bit_array, weight_array
+        );
+    } else {
+        println!(
+            "Bit Array: [{:?}, {:?}, {:?}, {:?}, {:?} ...]",
+            bit_array[0], bit_array[1], bit_array[2], bit_array[3], bit_array[4]
+        );
+        println!(
+            "two_to_the_bit_array: [{:?}, {:?}, {:?}, {:?}, {:?} ...]",
+            two_to_the_bit_array[0],
+            two_to_the_bit_array[1],
+            two_to_the_bit_array[2],
+            two_to_the_bit_array[3],
+            two_to_the_bit_array[4]
+        );
+        println!(
+            "Weight Array: [{:?}, {:?}, {:?}, {:?}, {:?} ...]\n",
+            weight_array[0], weight_array[1], weight_array[2], weight_array[3], weight_array[4]
         );
     }
 
@@ -88,10 +106,17 @@ fn prptest(
         if i % update_frequency == 0 {
             println!("Iteration: {:?}", i);
             println!("{:.2}% Finished", (i as f64 / exponent as f64) * 100.0);
-            // println!("Current Roundoff Error: {:.4}", roundoff);
-            println!("Residue: {:?}", &residue);
+            println!("Current Roundoff Error: {:.4}", roundoff);
+            if signal_length <= 5 {
+                println!("Residue: {:?}\n", &residue);
+            } else {
+                println!(
+                    "Residue: [{:?}, {:?}, {:?}, {:?}, {:?}, ...]\n",
+                    residue[0], residue[1], residue[2], residue[3], residue[4]
+                );
+            }
         }
-        residue = squaremod_with_ibdwt(
+        let (temp_residue, temp_roundoff) = squaremod_with_ibdwt(
             residue,
             &two_to_the_bit_array,
             &weight_array,
@@ -99,9 +124,12 @@ fn prptest(
             &ifft,
             run_verbose,
         );
-        // if roundoff > 0.4375:
-        // raise Exception(f"Roundoff error exceeded threshold (iteration {i}): {roundoff} vs 0.4375")
-  
+        residue = temp_residue;
+        roundoff = temp_roundoff;
+        if roundoff > 0.4375 {
+            eprintln!("Roundoff error is too great: {:.4} at iteration {:?}. Try a higher signal length.", roundoff, i);
+            std::process::exit(1);        
+        }
     }
 
     println!("Final Residue: {:?}", residue);
@@ -119,7 +147,7 @@ fn squaremod_with_ibdwt(
     fft: &Arc<dyn RealToComplex<f64>>,
     ifft: &Arc<dyn ComplexToReal<f64>>,
     run_verbose: bool,
-) -> Vec<f64> {
+) -> (Vec<f64>, f64) {
     let balanced_signal = balance(signal, two_to_the_bit_array);
     if run_verbose {
         println!("Balanced: {:?}", balanced_signal);
@@ -140,18 +168,18 @@ fn squaremod_with_ibdwt(
         println!("ifft: {:?}", squared_signal);
     }
 
-    let rounded_signal = squared_signal.iter().map(|&x| x.round()).collect();
+    let rounded_signal: Vec<f64> = squared_signal.iter().map(|&x| x.round()).collect();
     if run_verbose {
         println!("Rounded: {:?}", rounded_signal);
     }
-    // roundoff = jnp.max(jnp.abs(jnp.subtract(squared_signal, rounded_signal)))
+    let roundoff = squared_signal.iter().zip(rounded_signal.iter()).map(|(&x, &y)| (x - y).abs()).fold(0.0, f64::max);
 
     let carried_signal = complete_carry(rounded_signal, two_to_the_bit_array);
     if run_verbose {
         println!("Carried: {:?}\n\n", carried_signal);
     }
 
-    carried_signal
+    (carried_signal, roundoff)
 }
 
 fn balance(mut signal: Vec<f64>, two_to_the_bit_array: &[f64]) -> Vec<f64> {
@@ -206,7 +234,8 @@ fn complete_carry(mut signal: Vec<f64>, two_to_the_bit_array: &[f64]) -> Vec<f64
     for i in 0..signal_length {
         signal[i] += carry_val;
         carry_val = (signal[i] / two_to_the_bit_array[i]).floor();
-        signal[i] = ((signal[i] % two_to_the_bit_array[i]) + two_to_the_bit_array[i]) % two_to_the_bit_array[i];
+        signal[i] = ((signal[i] % two_to_the_bit_array[i]) + two_to_the_bit_array[i])
+            % two_to_the_bit_array[i];
     }
     let mut i = 0;
     let mut index;
@@ -214,7 +243,9 @@ fn complete_carry(mut signal: Vec<f64>, two_to_the_bit_array: &[f64]) -> Vec<f64
         index = i % signal_length;
         signal[index] += carry_val;
         carry_val = (signal[index] / two_to_the_bit_array[index]).floor();
-        signal[index] = ((signal[index] % two_to_the_bit_array[index]) + two_to_the_bit_array[index]) % two_to_the_bit_array[index];
+        signal[index] = ((signal[index] % two_to_the_bit_array[index])
+            + two_to_the_bit_array[index])
+            % two_to_the_bit_array[index];
         i += 1;
     }
 
@@ -235,7 +266,10 @@ fn init_bit_array(exponent: usize, signal_length: usize) -> (Vec<f64>, Vec<f64>)
         fi += 1.0;
     }
 
-    assert!(bit_array[0] > 4.0, "Signal length too large for this exponent.");
+    assert!(
+        bit_array[0] > 4.0,
+        "Signal length too large for this exponent."
+    );
     let mut two_to_the_bit_array = Vec::new();
     for &i in bit_array.iter() {
         two_to_the_bit_array.push(2_f64.powf(i));
@@ -250,10 +284,9 @@ fn init_weight_array(exponent: usize, signal_length: usize) -> Vec<f64> {
 
     let mut fi = 0.0;
     while fi < fsignal_length {
-        weight_array.push(
-            2_f64.powf(((fexponent * fi) / fsignal_length).ceil()
-                - ((fexponent * fi) / fsignal_length))
-        );
+        weight_array.push(2_f64.powf(
+            ((fexponent * fi) / fsignal_length).ceil() - ((fexponent * fi) / fsignal_length),
+        ));
         fi += 1.0;
     }
     weight_array

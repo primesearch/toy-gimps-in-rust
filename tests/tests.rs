@@ -84,18 +84,29 @@ fn test_real_fft_problem_cases() {
     let mut output = fft.make_output_vec();
     fft.process(&mut example, &mut output).unwrap();
     ifft.process(&mut output, &mut example).unwrap();
-    example = example.iter().map(|x| (*x / signal_length as f64).round()).collect();
-    
-    println!("Non-squared case: Comparing\n{:?}\nwith\n{:?}", start, example);
+    example = example
+        .iter()
+        .map(|x| (*x / signal_length as f64).round())
+        .collect();
+
+    println!(
+        "Non-squared case: Comparing\n{:?}\nwith\n{:?}",
+        start, example
+    );
     assert!(start == example);
 
     let squared: Vec<f64> = start.iter().map(|&x| x * x).collect();
     fft.process(&mut example, &mut output).unwrap();
-    output = output.iter().map(|&x| (x * x) / signal_length as f64).collect();
+    output = output
+        .iter()
+        .map(|&x| (x * x) / signal_length as f64)
+        .collect();
     ifft.process(&mut output, &mut example).unwrap();
     example = example.iter().map(|x| (*x).round()).collect();
 
-    println!("Squared case: Comparing\n{:?}\nwith\n{:?}", squared, example);
+    println!(
+        "Squared case: Comparing\n{:?}\nwith\n{:?}",
+        squared, example
+    );
     assert!(squared == example);
-
 }
