@@ -2,7 +2,8 @@
 //! a prime number by running a PRP test with the IBDWT. See readme for details.
 //!
 //! Josh McFerran, Winter 2022, Programming in Rust
-
+// use realfft::RealFftPlanner;
+// use rustfft::{num_complex::Complex, FftPlanner};
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 use rustfft::num_complex::Complex;
 use std::sync::Arc;
@@ -80,14 +81,15 @@ fn prptest(
 
     let mut residue = signalize(3, &two_to_the_bit_array);
 
-    let gec_l = 2000;
-    let gec_l_2 = gec_l ^ 2;
+    let gec_l: usize = 2000;
+    let gec_l_2 = gec_l.pow(2);
     let mut gec_d = residue.clone();
     let mut gec_prev_d = residue.clone();
     let mut gec_saved_d = residue.clone();
     let mut gec_saved_residue = residue.clone();
     let mut gec_saved_i: usize = 0;
-    let all_threes = vec![3.0; signal_length];
+    let mut three_signal = vec![0.0; signal_length];
+    three_signal[0] = 3.0;
 
     if signal_length <= 5 {
         println!(
@@ -137,45 +139,40 @@ fn prptest(
                 &weight_array,
                 &fft,
                 &ifft,
-                run_verbose,
+                false,
             );
             gec_d = temp_gec_d;
-            if temp_roundoff > 0.4375 {
-                eprintln!("Roundoff error is too great: {:.4} at iteration {:?} in the GEC L step. Try a higher signal length.", temp_roundoff, i);
-                std::process::exit(1);
-            }
+            check_roundoff(&temp_roundoff, &i);
         }
-        if i % gec_l_2 == 0 && i != 0 {
+        if (i % gec_l_2 == 0 && i != 0) || (i % gec_l == 0 && i + gec_l >= exponent) {
             let mut check_value = gec_prev_d.clone();
-            for j in 0..gec_l {
+            for _j in 0..gec_l {
                 let (temp_check_value, temp_roundoff) = squaremod_with_ibdwt(
                     check_value,
                     &two_to_the_bit_array,
                     &weight_array,
                     &fft,
                     &ifft,
-                    run_verbose,
+                    false,
                 );
-                if temp_roundoff > 0.4375 {
-                    eprintln!("Roundoff error is too great: {:.4} at iteration {:?} in the GEC L ^ 2 step {:?}. Try a higher signal length.", temp_roundoff, i, j);
-                    std::process::exit(1);
-                }
+                check_roundoff(&temp_roundoff, &i);
                 check_value = temp_check_value;
             }
             let (temp_check_value, temp_roundoff) = multmod_with_ibdwt(
                 check_value,
-                all_threes.clone(),
+                three_signal.clone(),
                 &two_to_the_bit_array,
                 &weight_array,
                 &fft,
                 &ifft,
-                run_verbose,
+                false,
             );
-            if temp_roundoff > 0.4375 {
-                eprintln!("Roundoff error is too great: {:.4} at iteration {:?} in the GEC L ^ 2 multmod step. Try a higher signal length.", temp_roundoff, i);
-                std::process::exit(1);
-            }
+            check_roundoff(&temp_roundoff, &i);
             if temp_check_value != gec_d {
+                println!(
+                    "Hardware error detected between iterations {:?} and {:?}; reverting to {:?}",
+                    gec_saved_i, i, gec_saved_i
+                );
                 gec_d = gec_saved_d.clone();
                 residue = gec_saved_residue.clone();
                 i = gec_saved_i;
@@ -194,15 +191,8 @@ fn prptest(
             run_verbose,
         );
         residue = temp_residue;
-        roundoff = temp_roundoff;
+        roundoff = check_roundoff(&temp_roundoff, &i);
         max_roundoff = roundoff.max(max_roundoff);
-        if roundoff > 0.4375 {
-            eprintln!(
-                "Roundoff error is too great: {:.4} at iteration {:?}. Try a higher signal length.",
-                roundoff, i
-            );
-            std::process::exit(1);
-        }
 
         i += 1;
     }
@@ -474,6 +464,17 @@ fn parsenum(s: String) -> usize {
     s.parse().unwrap_or_else(|_| usage())
 }
 
+fn check_roundoff(roundoff: &f64, i: &usize) -> f64 {
+    if *roundoff > 0.4375 {
+        eprintln!(
+            "Roundoff error is too great: {:.4} at iteration {:?}. Try a higher signal length.",
+            roundoff, i
+        );
+        std::process::exit(1);
+    }
+    *roundoff
+}
+
 /// Print a usage error message and exit.
 fn usage() -> ! {
     eprintln!(
@@ -492,4 +493,228 @@ fn usage_help() -> ! {
     println!("  -v, --verbose\t\t\t\tRun with increased verbosity");
     println!("  -h, --help\t\t\t\tPrint this message and exit");
     std::process::exit(0);
+}
+
+// ----------------------------------------------------------------------------
+// |                  Only tests from here down                               |
+// ----------------------------------------------------------------------------
+
+#[test]
+fn test_gec() {
+    fn prptest_with_forced_error(
+        exponent: usize,
+        signal_length: usize,
+        forced_error: Vec<usize>,
+    ) -> bool {
+        let mut errors_list = forced_error.into_iter();
+        let mut next_error;
+        match errors_list.next() {
+            Some(x) => next_error = x,
+            None => panic!("No forced errors"),
+        }
+
+        let (_bit_array, two_to_the_bit_array) = init_bit_array(exponent, signal_length);
+        let weight_array = init_weight_array(exponent, signal_length);
+        let (fft, ifft) = init_fft(signal_length);
+        let mut roundoff;
+        let mut max_roundoff = 0.0;
+
+        let mut residue = signalize(3, &two_to_the_bit_array);
+
+        let gec_l = (2000.min(((exponent as f64).sqrt() * 0.5).floor() as usize)).max(2);
+        let gec_l_2 = gec_l.pow(2);
+        let mut gec_d = residue.clone();
+        let mut gec_prev_d = residue.clone();
+        let mut gec_saved_d = residue.clone();
+        let mut gec_saved_residue = residue.clone();
+        let mut gec_saved_i: usize = 0;
+        let mut three_signal = vec![0.0; signal_length];
+        three_signal[0] = 3.0;
+        println!("L: {:?}\nL^2: {:?}", gec_l, gec_l_2);
+
+        let mut i = 0;
+        while i < exponent {
+            if i % gec_l == 0 && i != 0 {
+                gec_prev_d = gec_d.clone();
+                let (temp_gec_d, temp_roundoff) = multmod_with_ibdwt(
+                    residue.clone(),
+                    gec_d,
+                    &two_to_the_bit_array,
+                    &weight_array,
+                    &fft,
+                    &ifft,
+                    false,
+                );
+                gec_d = temp_gec_d;
+                check_roundoff(&temp_roundoff, &i);
+            }
+            if (i % gec_l_2 == 0 && i != 0) || (i % gec_l == 0 && i + gec_l >= exponent) {
+                let mut check_value = gec_prev_d.clone();
+                // println!("Iteration {:?}", i);
+                // println!("Starting with prev_d = {:?}\nDesig: {:?}", gec_prev_d, designalize(&gec_prev_d, &two_to_the_bit_array));
+                // println!("Starting with prev_d = {:?}", gec_prev_d);
+                for _j in 0..gec_l {
+                    let (temp_check_value, temp_roundoff) = squaremod_with_ibdwt(
+                        check_value,
+                        &two_to_the_bit_array,
+                        &weight_array,
+                        &fft,
+                        &ifft,
+                        false,
+                    );
+                    check_roundoff(&temp_roundoff, &i);
+                    check_value = temp_check_value;
+                }
+                // println!("After {:?} squaremods, now have {:?}\nDesig: {:?}", gec_l, check_value, designalize(&check_value, &two_to_the_bit_array));
+                // println!("After {:?} squaremods, now have {:?}", gec_l, check_value);
+                let (temp_check_value, temp_roundoff) = multmod_with_ibdwt(
+                    check_value,
+                    three_signal.clone(),
+                    &two_to_the_bit_array,
+                    &weight_array,
+                    &fft,
+                    &ifft,
+                    false,
+                );
+                check_roundoff(&temp_roundoff, &i);
+                // println!("After multmod by three, now have {:?}\nDesig: {:?}", temp_check_value, designalize(&temp_check_value, &two_to_the_bit_array));
+                // println!("Comparing it nwith d = {:?}\nDesig: {:?}\n", gec_d, designalize(&gec_d, &two_to_the_bit_array));
+                // println!("After multmod by three, now have {:?}", temp_check_value);
+                // println!("Comparing it nwith d = {:?}\n", gec_d);
+                if temp_check_value != gec_d {
+                    println!(
+                        "Hardware error detected between iterations {:?} and {:?}; reverting to {:?}",
+                        gec_saved_i, i, gec_saved_i
+                    );
+                    gec_d = gec_saved_d.clone();
+                    residue = gec_saved_residue.clone();
+                    i = gec_saved_i;
+                } else {
+                    gec_saved_d = gec_d.clone();
+                    gec_saved_residue = residue.clone();
+                    gec_saved_i = i;
+                }
+            }
+            let (temp_residue, temp_roundoff) = squaremod_with_ibdwt(
+                residue,
+                &two_to_the_bit_array,
+                &weight_array,
+                &fft,
+                &ifft,
+                false,
+            );
+            residue = temp_residue;
+            roundoff = check_roundoff(&temp_roundoff, &i);
+            max_roundoff = roundoff.max(max_roundoff);
+
+            if i == next_error {
+                residue[0] += 1.0;
+                match errors_list.next() {
+                    Some(x) => next_error = x,
+                    None => next_error = usize::MAX,
+                }
+            }
+
+            i += 1;
+        }
+
+        let first_is_nine = residue[0] == 9.0;
+        let rest_are_zero = residue[1..signal_length].iter().all(|&x| x == 0.0);
+
+        first_is_nine && rest_are_zero
+    }
+    let valid_primes = vec![
+        (17, 4),
+        (19, 4),
+        (31, 4),
+        (61, 8),
+        (89, 8),
+        (107, 8),
+        (127, 8),
+        (521, 32),
+        (607, 32),
+        (1279, 64),
+        (23209, 2048),
+    ];
+    for (exponent, signal_length) in valid_primes {
+        println!("Testing exponent {:?}", exponent);
+        let forced_errors = vec![0, exponent / 3, exponent / 3 + 1, 2 * exponent / 3];
+        println!("Should have errors at {:?}", forced_errors);
+        assert!(
+            prptest_with_forced_error(exponent, signal_length, forced_errors),
+            "Failed at exponent {:?}",
+            exponent
+        );
+        println!("Good\n");
+    }
+}
+
+#[test]
+fn test_real_fft() {
+    let mut real_planner = RealFftPlanner::<f64>::new();
+    for i in 0..23 {
+        let signal_length = 1 << i;
+        let fft = real_planner.plan_fft_forward(signal_length);
+        let ifft = real_planner.plan_fft_inverse(signal_length);
+
+        let mut example = Vec::new();
+        for j in 0..signal_length {
+            example.push(j as f64);
+        }
+        let start = example.clone();
+        let mut fft_output = fft.make_output_vec();
+
+        fft.process(&mut example, &mut fft_output).unwrap();
+        ifft.process(&mut fft_output, &mut example).unwrap();
+        example = example
+            .iter()
+            .map(|x| (x / example.len() as f64).round())
+            .collect();
+        println!("Comparing fft with ifft at sig len 2 ^ {:?}", i);
+        if !(start == example) {
+            println!("Failed comparison:\n{:?}\nand\n{:?}", start, example);
+            panic!()
+        } else {
+            println!("Good");
+        }
+    }
+}
+
+#[test]
+fn test_real_fft_problem_cases() {
+    let mut real_planner = RealFftPlanner::<f64>::new();
+    let signal_length = 4;
+    let fft = real_planner.plan_fft_forward(signal_length);
+    let ifft = real_planner.plan_fft_inverse(signal_length);
+
+    let mut example = vec![1.0, 5.0, 0.0, 0.0];
+    let start = example.clone();
+    let mut output = fft.make_output_vec();
+    fft.process(&mut example, &mut output).unwrap();
+    ifft.process(&mut output, &mut example).unwrap();
+    example = example
+        .iter()
+        .map(|x| (*x / signal_length as f64).round())
+        .collect();
+
+    println!(
+        "Non-squared case: Comparing\n{:?}\nwith\n{:?}",
+        start, example
+    );
+    assert!(start == example);
+
+    let squared: Vec<f64> = start.iter().map(|&x| x * x).collect();
+    fft.process(&mut example, &mut output).unwrap();
+    output = output
+        .iter()
+        .map(|&x| (x * x) / signal_length as f64)
+        .collect();
+    ifft.process(&mut output, &mut example).unwrap();
+    example = example.iter().map(|x| (*x).round()).collect();
+
+    println!(
+        "Squared case: Comparing\n{:?}\nwith\n{:?}",
+        squared, example
+    );
+    assert!(squared == example);
 }
