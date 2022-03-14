@@ -63,7 +63,7 @@ fn main() {
     }
 }
 
-/// This runs the actual loop and is the bulk of the program. Returns true if 2 ^ exponent -1
+/// This runs the actual loop and is the bulk of the program. Returns true if 2 ^ exponent - 1
 /// is probably prime, false otherwise.
 fn prptest(
     exponent: usize,
@@ -75,6 +75,7 @@ fn prptest(
     let weight_array = init_weight_array(exponent, signal_length);
     let (fft, ifft) = init_fft(signal_length);
     let mut roundoff = 0.0;
+    let mut max_roundoff = 0.0;
 
     let mut residue = signalize(3, &two_to_the_bit_array);
 
@@ -126,13 +127,22 @@ fn prptest(
         );
         residue = temp_residue;
         roundoff = temp_roundoff;
+        max_roundoff = roundoff.max(max_roundoff);
         if roundoff > 0.4375 {
             eprintln!("Roundoff error is too great: {:.4} at iteration {:?}. Try a higher signal length.", roundoff, i);
             std::process::exit(1);        
         }
     }
 
-    println!("Final Residue: {:?}", residue);
+    if signal_length <= 5 {
+        println!("\nFinal residue: {:?}", &residue);
+    } else {
+        println!(
+            "\nFinal residue: [{:?}, {:?}, {:?}, {:?}, {:?}, ...]",
+            residue[0], residue[1], residue[2], residue[3], residue[4]
+        );
+    }
+    println!("Max Roundoff Error: {:.4}", max_roundoff);
 
     let first_is_nine = residue[0] == 9.0;
     let rest_are_zero = residue[1..signal_length].iter().all(|&x| x == 0.0);
