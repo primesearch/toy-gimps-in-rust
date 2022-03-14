@@ -38,6 +38,7 @@ fn main() {
                 }
             }
             "-v" | "-V" | "--verbose" => run_verbose = true,
+            "-h" | "-H" | "--help" => usage_help(),
             &_ => usage(),
         }
     }
@@ -337,6 +338,17 @@ fn parsenum(s: String) -> usize {
 
 /// Print a usage error message and exit.
 fn usage() -> ! {
-    eprintln!("usage: toy-gimps-in-rust -e exponent -s signal_length [-f update_frequency]");
+    eprintln!("Usage: toy-gimps-in-rust -e <exponent> -s <signal_length> [-f <update_frequency>] [-v]");
     std::process::exit(1);
+}
+
+fn usage_help() -> ! {
+    println!("Usage: toy-gimps-in-rust -e <exponent> -s <signal_length> [-f <update_frequency>] [-v] [-h]");
+    println!("Checks if 2 ^ <exponent> - 1 is probably prime.");
+    println!("  -e, --exponent <exponent>\t\tThe exponent to be checked");
+    println!("  -s, --siglen <signal_length>\t\tThe signal length to use for the FFT");
+    println!("  -f, --frequency <update_frequency>\tThe number of iterations between updates; defaults to <exponent> / 100");
+    println!("  -v, --verbose\t\t\t\tRun with increased verbosity");
+    println!("  -h, --help\t\t\t\tPrint this message and exit");
+    std::process::exit(0);
 }
