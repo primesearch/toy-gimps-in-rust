@@ -400,11 +400,12 @@ fn determine_best_signal_length(exponent: usize) -> usize {
     let mut best_signal_length = 0;
     let mut base = 0;
     while best_signal_length == 0 {
-        for i in 8..15 {
+        for i in 128..255 {
             let prospective_signal_length = i * (1 << base);
             let max = get_max_exponent(prospective_signal_length as f64);
             if max > exponent {
                 best_signal_length = prospective_signal_length;
+                break;
             }
         }
         base += 1;
@@ -414,7 +415,7 @@ fn determine_best_signal_length(exponent: usize) -> usize {
 
 fn get_max_exponent(signal_length: f64) -> usize {
     let num_mantissa_bits = 53.0;
-    let magic_c = 3.0;
+    let magic_c = 14.0;
     let ln_2_inverse = 1.0 / 2.0_f64.ln();
 
     let ln_signal_length = signal_length.ln();
