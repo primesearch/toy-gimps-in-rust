@@ -80,6 +80,15 @@ fn prptest(
 
     let mut residue = signalize(3, &two_to_the_bit_array);
 
+    let gec_l = 2000;
+    let gec_l_2 = gec_l ^ 2;
+    let mut gec_d = residue.clone();
+    let mut gec_prev_d = residue.clone();
+    let mut gec_saved_d = residue.clone();
+    let mut gec_saved_residue = residue.clone();
+    let mut gec_saved_i: usize = 0;
+    let all_threes = vec![3.0; signal_length];
+
     if signal_length <= 5 {
         println!(
             "Bit Array: {:?}\ntwo_to_the_bit_array: {:?}\nWeight Array:{:?}\n",
@@ -104,7 +113,8 @@ fn prptest(
         );
     }
 
-    for i in 0..exponent {
+    let mut i = 0;
+    while i < exponent {
         if i % update_frequency == 0 {
             println!("Iteration: {:?}", i);
             println!("{:.2}% Finished", (i as f64 / exponent as f64) * 100.0);
@@ -116,6 +126,63 @@ fn prptest(
                     "Residue: [{:?}, {:?}, {:?}, {:?}, {:?}, ...]\n",
                     residue[0], residue[1], residue[2], residue[3], residue[4]
                 );
+            }
+        }
+        if i % gec_l == 0 && i != 0 {
+            gec_prev_d = gec_d.clone();
+            let (temp_gec_d, temp_roundoff) = multmod_with_ibdwt(
+                residue.clone(),
+                gec_d,
+                &two_to_the_bit_array,
+                &weight_array,
+                &fft,
+                &ifft,
+                run_verbose,
+            );
+            gec_d = temp_gec_d;
+            if temp_roundoff > 0.4375 {
+                eprintln!("Roundoff error is too great: {:.4} at iteration {:?} in the GEC L step. Try a higher signal length.", temp_roundoff, i);
+                std::process::exit(1);
+            }
+        }
+        if i % gec_l_2 == 0 && i != 0 {
+            let mut check_value = gec_prev_d.clone();
+            for j in 0..gec_l {
+                let (temp_check_value, temp_roundoff) = squaremod_with_ibdwt(
+                    check_value,
+                    &two_to_the_bit_array,
+                    &weight_array,
+                    &fft,
+                    &ifft,
+                    run_verbose,
+                );
+                if temp_roundoff > 0.4375 {
+                    eprintln!("Roundoff error is too great: {:.4} at iteration {:?} in the GEC L ^ 2 step {:?}. Try a higher signal length.", temp_roundoff, i, j);
+                    std::process::exit(1);
+                }
+                check_value = temp_check_value;
+            }
+            let (temp_check_value, temp_roundoff) = multmod_with_ibdwt(
+                check_value,
+                all_threes.clone(),
+                &two_to_the_bit_array,
+                &weight_array,
+                &fft,
+                &ifft,
+                run_verbose,
+            );
+            if temp_roundoff > 0.4375 {
+                eprintln!("Roundoff error is too great: {:.4} at iteration {:?} in the GEC L ^ 2 multmod step. Try a higher signal length.", temp_roundoff, i);
+                std::process::exit(1);
+            }
+            if temp_check_value != gec_d {
+                gec_d = gec_saved_d.clone();
+                residue = gec_saved_residue.clone();
+                i = gec_saved_i;
+            } else {
+                gec_saved_d = gec_d.clone();
+                gec_saved_residue = residue.clone();
+                gec_saved_i = i;
             }
         }
         let (temp_residue, temp_roundoff) = squaremod_with_ibdwt(
@@ -130,9 +197,14 @@ fn prptest(
         roundoff = temp_roundoff;
         max_roundoff = roundoff.max(max_roundoff);
         if roundoff > 0.4375 {
-            eprintln!("Roundoff error is too great: {:.4} at iteration {:?}. Try a higher signal length.", roundoff, i);
-            std::process::exit(1);        
+            eprintln!(
+                "Roundoff error is too great: {:.4} at iteration {:?}. Try a higher signal length.",
+                roundoff, i
+            );
+            std::process::exit(1);
         }
+
+        i += 1;
     }
 
     if signal_length <= 5 {
@@ -183,7 +255,73 @@ fn squaremod_with_ibdwt(
     if run_verbose {
         println!("Rounded: {:?}", rounded_signal);
     }
-    let roundoff = squared_signal.iter().zip(rounded_signal.iter()).map(|(&x, &y)| (x - y).abs()).fold(0.0, f64::max);
+    let roundoff = squared_signal
+        .iter()
+        .zip(rounded_signal.iter())
+        .map(|(&x, &y)| (x - y).abs())
+        .fold(0.0, f64::max);
+
+    let carried_signal = complete_carry(rounded_signal, two_to_the_bit_array);
+    if run_verbose {
+        println!("Carried: {:?}\n\n", carried_signal);
+    }
+
+    (carried_signal, roundoff)
+}
+
+fn multmod_with_ibdwt(
+    first_signal: Vec<f64>,
+    second_signal: Vec<f64>,
+    two_to_the_bit_array: &[f64],
+    weight_array: &[f64],
+    fft: &Arc<dyn RealToComplex<f64>>,
+    ifft: &Arc<dyn ComplexToReal<f64>>,
+    run_verbose: bool,
+) -> (Vec<f64>, f64) {
+    let first_balanced_signal = balance(first_signal, two_to_the_bit_array);
+    if run_verbose {
+        println!("First Balanced: {:?}", first_balanced_signal);
+    }
+
+    let first_transformed_signal = weighted_transform(first_balanced_signal, weight_array, fft);
+    if run_verbose {
+        println!("fft: {:?}", first_transformed_signal);
+    }
+
+    let second_balanced_signal = balance(second_signal, two_to_the_bit_array);
+    if run_verbose {
+        println!("Second Balanced: {:?}", second_balanced_signal);
+    }
+
+    let second_transformed_signal = weighted_transform(second_balanced_signal, weight_array, fft);
+    if run_verbose {
+        println!("fft: {:?}", second_transformed_signal);
+    }
+
+    let multiplied_transformed_signal = first_transformed_signal
+        .into_iter()
+        .zip(second_transformed_signal.into_iter())
+        .map(|(x, y)| x * y)
+        .collect();
+    if run_verbose {
+        println!("Squared fft: {:?}", multiplied_transformed_signal);
+    }
+
+    let squared_signal =
+        inverse_weighted_transform(multiplied_transformed_signal, weight_array, ifft);
+    if run_verbose {
+        println!("ifft: {:?}", squared_signal);
+    }
+
+    let rounded_signal: Vec<f64> = squared_signal.iter().map(|&x| x.round()).collect();
+    if run_verbose {
+        println!("Rounded: {:?}", rounded_signal);
+    }
+    let roundoff = squared_signal
+        .iter()
+        .zip(rounded_signal.iter())
+        .map(|(&x, &y)| (x - y).abs())
+        .fold(0.0, f64::max);
 
     let carried_signal = complete_carry(rounded_signal, two_to_the_bit_array);
     if run_verbose {
@@ -338,10 +476,13 @@ fn parsenum(s: String) -> usize {
 
 /// Print a usage error message and exit.
 fn usage() -> ! {
-    eprintln!("Usage: toy-gimps-in-rust -e <exponent> -s <signal_length> [-f <update_frequency>] [-v]");
+    eprintln!(
+        "Usage: toy-gimps-in-rust -e <exponent> -s <signal_length> [-f <update_frequency>] [-v]"
+    );
     std::process::exit(1);
 }
 
+/// Print a help message and exit.
 fn usage_help() -> ! {
     println!("Usage: toy-gimps-in-rust -e <exponent> -s <signal_length> [-f <update_frequency>] [-v] [-h]");
     println!("Checks if 2 ^ <exponent> - 1 is probably prime.");
