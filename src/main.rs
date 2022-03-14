@@ -49,14 +49,10 @@ fn main() {
         println!("Taking signal length {:?}", signal_length);
     }
 
-    assert!(exponent > 3, "Invalid exponent; must be greater than 3");
+    assert!(exponent > 1, "Invalid exponent; must be greater than 1");
     assert!(
-        signal_length > 3,
-        "Invalid signal length; must be greater than 3"
-    );
-    assert!(
-        signal_length < exponent,
-        "Invalid signal length; must be less than the exponent"
+        signal_length > 1,
+        "Invalid signal length; must be greater than 1"
     );
 
     if update_frequency == 0 {
@@ -84,7 +80,9 @@ fn prptest(
     let mut roundoff = 0.0;
     let mut max_roundoff = 0.0;
 
-    let mut residue = signalize(3, &two_to_the_bit_array);
+    let mut residue = vec![0.0; signal_length];
+    residue[0] = 3.0;
+    residue = complete_carry(residue, &two_to_the_bit_array);
 
     let gec_l: usize = 2000;
     let gec_l_2 = gec_l.pow(2);
@@ -93,8 +91,7 @@ fn prptest(
     let mut gec_saved_d = residue.clone();
     let mut gec_saved_residue = residue.clone();
     let mut gec_saved_i: usize = 0;
-    let mut three_signal = vec![0.0; signal_length];
-    three_signal[0] = 3.0;
+    let three_signal = residue.clone();
 
     if signal_length <= 5 {
         println!(
@@ -212,10 +209,11 @@ fn prptest(
     }
     println!("Max Roundoff Error: {:.4}", max_roundoff);
 
-    let first_is_nine = residue[0] == 9.0;
-    let rest_are_zero = residue[1..signal_length].iter().all(|&x| x == 0.0);
+    let mut nine_signal = vec![0.0; signal_length];
+    nine_signal[0] = 9.0;
+    nine_signal = complete_carry(nine_signal, &two_to_the_bit_array);
 
-    first_is_nine && rest_are_zero
+    residue == nine_signal
 }
 
 fn squaremod_with_ibdwt(
@@ -449,8 +447,8 @@ fn init_bit_array(exponent: usize, signal_length: usize) -> (Vec<f64>, Vec<f64>)
     }
 
     assert!(
-        bit_array[0] > 4.0,
-        "Signal length too large for this exponent."
+        bit_array.iter().all(|&x| x < 30.0),
+        "Signal length too small for this exponent."
     );
     let mut two_to_the_bit_array = Vec::new();
     for &i in bit_array.iter() {
@@ -481,16 +479,16 @@ fn init_fft(signal_length: usize) -> (Arc<dyn RealToComplex<f64>>, Arc<dyn Compl
     (fft, ifft)
 }
 
-fn signalize(mut num_to_signalize: usize, two_to_the_bit_array: &[f64]) -> Vec<f64> {
-    let mut signal = vec![0.0_f64; two_to_the_bit_array.len()];
-    let mut i = 0;
-    while num_to_signalize > 0 {
-        signal[i] = num_to_signalize as f64 % two_to_the_bit_array[i];
-        num_to_signalize /= two_to_the_bit_array[i] as usize;
-        i += 1;
-    }
-    signal
-}
+// fn signalize(mut num_to_signalize: usize, two_to_the_bit_array: &[f64]) -> Vec<f64> {
+//     let mut signal = vec![0.0_f64; two_to_the_bit_array.len()];
+//     let mut i = 0;
+//     while num_to_signalize > 0 {
+//         signal[i] = num_to_signalize as f64 % two_to_the_bit_array[i];
+//         num_to_signalize /= two_to_the_bit_array[i] as usize;
+//         i += 1;
+//     }
+//     signal
+// }
 
 // fn designalize(signal: &[f64], two_to_the_bit_array: &[f64]) -> i64 {
 //     let mut base = 1;
@@ -562,7 +560,9 @@ fn test_gec() {
         let mut roundoff;
         let mut max_roundoff = 0.0;
 
-        let mut residue = signalize(3, &two_to_the_bit_array);
+        let mut residue = vec![0.0; signal_length];
+        residue[0] = 3.0;
+        residue = complete_carry(residue, &two_to_the_bit_array);
 
         let gec_l = (2000.min(((exponent as f64).sqrt() * 0.5).floor() as usize)).max(2);
         let gec_l_2 = gec_l.pow(2);
@@ -661,10 +661,11 @@ fn test_gec() {
             i += 1;
         }
 
-        let first_is_nine = residue[0] == 9.0;
-        let rest_are_zero = residue[1..signal_length].iter().all(|&x| x == 0.0);
+        let mut nine_signal = vec![0.0; signal_length];
+        nine_signal[0] = 9.0;
+        nine_signal = complete_carry(nine_signal, &two_to_the_bit_array);
 
-        first_is_nine && rest_are_zero
+        residue == nine_signal
     }
     let valid_primes = vec![
         (17, 4),
