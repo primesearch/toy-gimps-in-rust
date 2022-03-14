@@ -44,6 +44,11 @@ fn main() {
         }
     }
 
+    if signal_length == 0 {
+        signal_length = determine_best_signal_length(exponent);
+        println!("Taking signal length {:?}", signal_length);
+    }
+
     assert!(exponent > 3, "Invalid exponent; must be greater than 3");
     assert!(
         signal_length > 3,
@@ -391,6 +396,43 @@ fn complete_carry(mut signal: Vec<f64>, two_to_the_bit_array: &[f64]) -> Vec<f64
     signal
 }
 
+fn determine_best_signal_length(exponent: usize) -> usize {
+    let mut best_signal_length = 0;
+    let mut base = 0;
+    while best_signal_length == 0 {
+        for i in 8..15 {
+            let prospective_signal_length = i * (1 << base);
+            let max = get_max_exponent(prospective_signal_length as f64);
+            if max > exponent {
+                best_signal_length = prospective_signal_length;
+            }
+        }
+        base += 1;
+    }
+    best_signal_length
+}
+
+fn get_max_exponent(signal_length: f64) -> usize {
+    let num_mantissa_bits = 53.0;
+    let magic_c = 3.0;
+    let ln_2_inverse = 1.0 / 2.0_f64.ln();
+
+    let ln_signal_length = signal_length.ln();
+    let lnln_signal_length = ln_signal_length.ln();
+    let log2_signal_length = ln_2_inverse * ln_signal_length;
+    let lnlog2_signal_length = log2_signal_length.ln();
+    let log2log2_signal_length = ln_2_inverse * lnlog2_signal_length;
+    let lnlnln_signal_length = lnln_signal_length.ln();
+    let log2lnln_signal_length = ln_2_inverse * lnlnln_signal_length;
+
+    let max_bit_array_value = 0.5
+        * (num_mantissa_bits
+            - magic_c
+            - 0.5 * (log2_signal_length + log2log2_signal_length)
+            - 1.5 * (log2lnln_signal_length));
+    (max_bit_array_value * signal_length) as usize
+}
+
 fn init_bit_array(exponent: usize, signal_length: usize) -> (Vec<f64>, Vec<f64>) {
     let fexponent: f64 = exponent as f64;
     let fsignal_length: f64 = signal_length as f64;
@@ -478,14 +520,14 @@ fn check_roundoff(roundoff: &f64, i: &usize) -> f64 {
 /// Print a usage error message and exit.
 fn usage() -> ! {
     eprintln!(
-        "Usage: toy-gimps-in-rust -e <exponent> -s <signal_length> [-f <update_frequency>] [-v]"
+        "Usage: toy-gimps-in-rust -e <exponent> [-s <signal_length>] [-f <update_frequency>] [-v]"
     );
     std::process::exit(1);
 }
 
 /// Print a help message and exit.
 fn usage_help() -> ! {
-    println!("Usage: toy-gimps-in-rust -e <exponent> -s <signal_length> [-f <update_frequency>] [-v] [-h]");
+    println!("Usage: toy-gimps-in-rust -e <exponent> [-s <signal_length>] [-f <update_frequency>] [-v] [-h]");
     println!("Checks if 2 ^ <exponent> - 1 is probably prime.");
     println!("  -e, --exponent <exponent>\t\tThe exponent to be checked");
     println!("  -s, --siglen <signal_length>\t\tThe signal length to use for the FFT");
