@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2022 Joshua McFerran <mcferran.joshua@gmail.com>
+// SPDX-License-Identifier: MIT
+
+
 //! Determines if the Mersenne number corresponding to the passed in exponent is
 //! a prime number by running a PRP test with the IBDWT. See readme for details.
 //!
