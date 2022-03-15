@@ -38,4 +38,4 @@ but the GIMPS programs in actual use are much, much more complicated than that. 
 - __Automatic Signal Length Calculation__: see Richard Crandall, Ernst Mayer, and Jason Papadopoulos' paper [here](https://www.mersenneforum.org/attachments/pdfs/F24.pdf) starting on (pdf) page 8 with the actual formula on page 10. (Warning: this feature doesn't yet seem to work right with the rest of the program.)
 
 ## Disclaimer
-I make no guarantee that this program is the "real" way that _any_ other GIMPS program does _anything_; it's merely my attempt at illustrating some important GIMPS ideas in a (hopefully) digestable format.
+I make no guarantee that this program is the "real" way that _any_ other GIMPS program does _anything_; it's merely my attempt at illustrating some important GIMPS ideas in a (hopefully) digestable format. This program is missing quite a few key features that a real GIMPS program would have: interaction with the primenet server, save states that get regularly updated during runtime, trial factoring before the PRP loop, and a bunch of other things.
