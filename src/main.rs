@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: © 2022 Joshua McFerran <mcferran.joshua@gmail.com>
 // SPDX-License-Identifier: MIT
 
-
 //! Determines if the Mersenne number corresponding to the passed in exponent is
 //! a prime number by running a PRP test with the IBDWT. See readme for details.
 //!
@@ -104,7 +103,7 @@ fn prptest(
     let mut gec_saved_d = residue.clone();
     let mut gec_saved_residue = residue.clone();
     let mut gec_saved_i: usize = 0;
-    let three_signal = residue.clone();  // Need this for the "* 3" in the L^2 step
+    let three_signal = residue.clone(); // Need this for the "* 3" in the L^2 step
 
     // Check if signal length is big before printing; don't want 2M elements being printed
     if signal_length <= 9 {
@@ -217,7 +216,7 @@ fn prptest(
         // make sure we didn't go above the threshold; if we did, panic.
         // Real GIMPS programs probably automatically try the next signal length instead.
         roundoff = check_roundoff(&temp_roundoff, &i);
-        max_roundoff = roundoff.max(max_roundoff);  // Only used for final print to user
+        max_roundoff = roundoff.max(max_roundoff); // Only used for final print to user
 
         i += 1;
     }
@@ -366,7 +365,7 @@ fn multmod_with_ibdwt(
     (carried_signal, roundoff)
 }
 
-/// Takes a signal and returns that signal after it's been balanced across 0 with 
+/// Takes a signal and returns that signal after it's been balanced across 0 with
 /// respect to the maximums contained in two_to_the_bit_array.
 /// e.g. if signal = [1, 2, 3, 3] and two_to_the_bit_array = [8, 4, 4, 4],
 /// this would return [2, 2, -1, 0]
@@ -436,7 +435,7 @@ fn inverse_weighted_transform(
 /// operator). The only trick after that is that the highest digit carries into the
 /// lowest digit; this is because each rollover of the highest digit corresponds to
 /// adding 2^exponent to our signal. Since we're modding by 2^exponent - 1, each addition
-/// of 2^exponent is equivalent by mod to an increase of 1. 
+/// of 2^exponent is equivalent by mod to an increase of 1.
 /// e.g. (x + 2^61) mod (2^61 - 1) == (x + 1) mod (2^61 - 1)
 /// Lastly, this is also where the balanced digit representation gets taken care of
 /// for free; don't need to do anything special, if a value is negative it just ends
@@ -445,7 +444,7 @@ fn inverse_weighted_transform(
 fn complete_carry(mut signal: Vec<f64>, two_to_the_bit_array: &[f64]) -> Vec<f64> {
     let mut carry_val = 0.0;
     let signal_length = signal.len();
-    
+
     // This iterates through the list once, propogating carries through the list
     for i in 0..signal_length {
         signal[i] += carry_val;
@@ -501,8 +500,8 @@ fn determine_best_signal_length(exponent: usize) -> usize {
 fn get_max_exponent(signal_length: f64) -> usize {
     let num_mantissa_bits = 53.0;
     // This should be much lower (around 1) and it should still function; I'm not
-    // really sure why it needs to be so high to work for even medium-sized exponents. 
-    let magic_c = 14.0;  
+    // really sure why it needs to be so high to work for even medium-sized exponents.
+    let magic_c = 14.0;
     let ln_2_inverse = 1.0 / 2.0_f64.ln();
 
     let ln_signal_length = signal_length.ln();
@@ -528,7 +527,7 @@ fn init_bit_array(exponent: usize, signal_length: usize) -> (Vec<f64>, Vec<f64>)
     let fsignal_length: f64 = signal_length as f64;
     let mut bit_array = Vec::new();
 
-    let mut fi = 1.0;  // Needed a floating point iteration value
+    let mut fi = 1.0; // Needed a floating point iteration value
     while fi < fsignal_length + 1.0 {
         bit_array.push(
             ((fexponent * fi) / fsignal_length).ceil()
